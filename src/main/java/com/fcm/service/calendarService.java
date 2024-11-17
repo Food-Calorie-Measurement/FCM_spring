@@ -21,7 +21,7 @@ public class calendarService {
         return repository.findAll();
     }
 
-    public List<?> findAllCalenderByuserId(Long userId) {
+    public List<calenderEntity> findAllCalenderByuserId(Long userId) {
         return repository.findAllByuserId(userId);
     }
 }

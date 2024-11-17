@@ -33,11 +33,12 @@ public class calenderEntity {
 
     public calenderEntity() {}
 
-    public calenderEntity(LocalDateTime date, String title, String description, String imagePath, Long userId) {
+    public calenderEntity(LocalDateTime date, String title, String description, String imagePath, Long userId, String predictResult) {
         this.date = date;
         this.title = title;
         this.description = description;
         this.imagePath = imagePath;
         this.userId = userId;
+        this.predictResult = predictResult;
     }
 }

@@ -1,13 +1,15 @@
 package com.fcm.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fcm.dto.foodDto;
 import com.fcm.entity.calenderEntity;
-import com.fcm.entity.imageResultEntity;
 import com.fcm.service.calendarService;
-import com.fcm.service.imageResultService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.*;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
@@ -18,16 +20,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 public class calendarController {
 
     @Autowired
     private calendarService service;
-
-    @Autowired
-    private imageResultService resultService;
 
     // 캘린더 자료 업로드
     @PostMapping(value = "/calendar/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -50,9 +53,21 @@ public class calendarController {
 
         String changePathToString = path.toString();
 
-        calenderEntity savedEntity = new calenderEntity(
-                LocalDateTime.now(), entity.getTitle(), entity.getDescription(), changePathToString, entity.getUserId()
+        // JSON 응답 파싱
+        String responseBody = saveImageResult(path.toString());
+        JsonNode rootNode = objectMapper.readTree(responseBody);
+        List<String> namesList = objectMapper.convertValue(
+                rootNode.get("names"),
+                List.class
         );
+
+        // 리스트를 콤마로 연결된 문자열로 변환
+        String namesString = String.join(", ", namesList);
+
+        calenderEntity savedEntity = new calenderEntity(
+                LocalDateTime.now(), entity.getTitle(), entity.getDescription(), changePathToString, entity.getUserId(), namesString
+        );
+
 
         service.save(savedEntity);
 
@@ -60,22 +75,89 @@ public class calendarController {
     }
 
     @GetMapping("/calendar/{id}")
-    public ResponseEntity<List<?>> getCalendar(@PathVariable Long id) {
-        return ResponseEntity.ok(service.findAllCalenderByuserId(id));
+    public ResponseEntity<List<foodDto>> getCalendar(@PathVariable Long id) {
+        List<calenderEntity> entities = service.findAllCalenderByuserId(id);
+
+        List<foodDto> dtoList = entities.stream().map(entity -> {
+            List<String> predictResults = List.of(entity.getPredictResult().split(",\\s*"));
+
+            // 음식별 개수 계산
+            Map<String, Long> foodCountMap = predictResults.stream()
+                    .collect(Collectors.groupingBy(food -> food, Collectors.counting()));
+
+            // foodNames와 foodKcals 리스트 생성
+            List<String> foodNames = new ArrayList<>(foodCountMap.keySet());
+            List<Integer> foodKcals = foodNames.stream()
+                    .map(food -> calculateKcal(food) * foodCountMap.get(food).intValue())
+                    .toList();
+
+            // 총 칼로리 계산
+            int totalFoodKcal = foodKcals.stream().mapToInt(Integer::intValue).sum();
+
+            // FoodDto 생성
+            return new foodDto(
+                    entity.getId(),
+                    entity.getDate().toString(),
+                    entity.getTitle(),
+                    entity.getDescription(),
+                    foodNames,
+                    foodKcals,
+                    totalFoodKcal,
+                    entity.getImagePath(),
+                    predictResults
+            );
+        }).collect(Collectors.toList());
+
+        return ResponseEntity.ok(dtoList);
     }
 
-    private void saveImageResult(Long id, String imagePath) {
-        String flaskUrl = "http://localhost:5000/upload";
+    private int calculateKcal(String foodName) {
+        // 음식명에 따른 칼로리 값을 반환 (예시)
+        switch (foodName.toLowerCase()) {
+            case "fried_chicken":
+                return 500;
+            case "pizza":
+                return 300;
+            case "burger":
+                return 450;
+            default:
+                return 200; // 기본 칼로리 값
+        }
+    }
+
+    private String saveImageResult(String imagePath) {
+        String flaskUrl = "http://127.0.0.1:6000/upload";
         RestTemplate restTemplate = new RestTemplate();
 
         // 파일 리소스 생성
         File imageFile = new File(imagePath);
         FileSystemResource fileResource = new FileSystemResource(imageFile);
 
-        // multipart/form-data로 파일 전송
-        String response = restTemplate.postForObject(flaskUrl, fileResource, String.class);
+        // HttpHeaders 설정
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
 
-        // 응답 출력
-        System.out.println("Response from Flask: " + response);
+        // Multipart 요청 생성
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("image", fileResource);
+
+        HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
+
+        try {
+            // POST 요청 전송
+            ResponseEntity<String> response = restTemplate.exchange(
+                    flaskUrl,
+                    HttpMethod.POST,
+                    requestEntity,
+                    String.class
+            );
+
+            // 응답 출력
+            System.out.println("Response from Flask: " + response.getBody());
+            return response.getBody();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "Error: " + e.getMessage();
+        }
     }
 }
