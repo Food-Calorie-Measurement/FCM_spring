@@ -116,10 +116,14 @@ public class calendarController {
         switch (foodName.toLowerCase()) {
             case "fried_chicken":
                 return 500;
-            case "pizza":
+            case "kimbap":
+                return 320;
+            case "ramyeon":
+                return 500;
+            case "black_noodle":
+                return 700;
+            case "topokki":
                 return 300;
-            case "burger":
-                return 450;
             default:
                 return 200; // 기본 칼로리 값
         }
