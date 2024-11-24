@@ -1,5 +1,6 @@
 package com.fcm.controller;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fcm.dto.foodDto;
@@ -20,10 +21,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @RestController
@@ -51,27 +49,44 @@ public class calendarController {
         Path path = Paths.get("src/main/resources/static/" + file.getOriginalFilename());
         Files.write(path, bytes);
 
-        String changePathToString = path.toString();
+        String savedImagePath = path.toString();
 
-        // JSON 응답 파싱
-        String responseBody = saveImageResult(path.toString());
-        JsonNode rootNode = objectMapper.readTree(responseBody);
-        List<String> namesList = objectMapper.convertValue(
-                rootNode.get("names"),
-                List.class
-        );
+        // Flask 서버의 응답 처리
+        String responseBody = saveImageResult(savedImagePath, file.getOriginalFilename());
+        JsonNode rootNode;
+        System.out.println(responseBody);
+        try {
+            rootNode = objectMapper.readTree(responseBody);
+        } catch (JsonProcessingException e) {
+            return ResponseEntity.badRequest().body("Flask 서버 응답이 유효한 JSON 형식이 아닙니다.");
+        }
 
-        // 리스트를 콤마로 연결된 문자열로 변환
+        // Flask 응답 데이터 검증
+        String base64Image = rootNode.path("imagePath").asText(null);
+        JsonNode namesNode = rootNode.path("names");
+        if (base64Image == null || !namesNode.isArray()) {
+            return ResponseEntity.badRequest().body("Flask 서버 응답 데이터가 유효하지 않습니다.");
+        }
+
+        // 음식 이름 리스트 추출
+        List<String> namesList = new ArrayList<>();
+        for (JsonNode nameNode : namesNode) {
+            namesList.add(nameNode.asText());
+        }
         String namesString = String.join(", ", namesList);
 
+        // 엔티티 저장
         calenderEntity savedEntity = new calenderEntity(
-                LocalDateTime.now(), entity.getTitle(), entity.getDescription(), changePathToString, entity.getUserId(), namesString
+                LocalDateTime.now(),
+                entity.getTitle(),
+                entity.getDescription(),
+                base64Image,
+                entity.getUserId(),
+                namesString
         );
-
-
         service.save(savedEntity);
 
-        return ResponseEntity.ok().build();
+        return ResponseEntity.ok().body("이미지 업로드 및 처리 완료");
     }
 
     @GetMapping("/calendar/{id}")
@@ -129,7 +144,7 @@ public class calendarController {
         }
     }
 
-    private String saveImageResult(String imagePath) {
+    private String saveImageResult(String imagePath, String originalFilename) {
         String flaskUrl = "http://127.0.0.1:6000/upload";
         RestTemplate restTemplate = new RestTemplate();
 
@@ -149,19 +164,57 @@ public class calendarController {
 
         try {
             // POST 요청 전송
-            ResponseEntity<String> response = restTemplate.exchange(
+            ResponseEntity<Map> response = restTemplate.exchange(
                     flaskUrl,
                     HttpMethod.POST,
                     requestEntity,
-                    String.class
+                    Map.class
             );
 
-            // 응답 출력
-            System.out.println("Response from Flask: " + response.getBody());
-            return response.getBody();
+            // 응답 처리
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                Map<String, Object> responseBody = response.getBody();
+
+                // base64 이미지 디코딩 및 저장
+                String base64Image = (String) responseBody.get("image");
+                List<String> names = (List<String>) responseBody.get("names"); // names 리스트 가져오기
+
+                if (base64Image != null) {
+                    byte[] decodedBytes = Base64.getDecoder().decode(base64Image);
+
+                    // src/main/resources/static/images 폴더 생성
+                    String outputFolderPath = "src/main/resources/static/images";
+                    File outputFolder = new File(outputFolderPath);
+                    if (!outputFolder.exists()) {
+                        boolean created = outputFolder.mkdirs();
+                        if (!created) {
+                            return "{\"error\": \"Failed to create output folder.\"}";
+                        }
+                    }
+
+                    // 파일 저장 경로 설정
+                    String outputFileName = originalFilename; // 저장할 파일 이름
+                    Path outputFilePath = Paths.get(outputFolderPath, outputFileName);
+                    Files.write(outputFilePath, decodedBytes);
+
+                    System.out.println("Image saved to: " + outputFilePath.toAbsolutePath());
+
+                    // JSON 응답 생성
+                    ObjectMapper objectMapper = new ObjectMapper();
+                    Map<String, Object> result = new HashMap<>();
+                    result.put("imagePath", outputFilePath.toAbsolutePath().toString());
+                    result.put("names", names);
+
+                    return objectMapper.writeValueAsString(result); // JSON 문자열 반환
+                } else {
+                    return "{\"error\": \"Image not found in response.\"}";
+                }
+            } else {
+                return "{\"error\": \"Failed to get a valid response from Flask.\"}";
+            }
         } catch (Exception e) {
             e.printStackTrace();
-            return "Error: " + e.getMessage();
+            return "{\"error\": \"" + e.getMessage() + "\"}";
         }
     }
 }
