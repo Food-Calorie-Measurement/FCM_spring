@@ -8,6 +8,8 @@ import com.fcm.entity.calenderEntity;
 import com.fcm.service.calendarService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.http.*;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -16,6 +18,7 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -216,5 +219,20 @@ public class calendarController {
             e.printStackTrace();
             return "{\"error\": \"" + e.getMessage() + "\"}";
         }
+    }
+
+    @GetMapping("/downloadFile")
+    public ResponseEntity<Resource> downloadFile(@RequestParam String imagePath) throws IOException {
+        Path path = Paths.get(imagePath);
+        Resource resource = new UrlResource(path.toUri());
+
+        if (!resource.exists()) {
+            throw new FileNotFoundException("File not found: " + imagePath);
+        }
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.IMAGE_JPEG) // 파일 유형에 맞게 설정 (예: PNG, PDF 등)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + resource.getFilename() + "\"")
+                .body(resource);
     }
 }
